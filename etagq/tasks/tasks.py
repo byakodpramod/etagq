@@ -24,13 +24,13 @@ def insert_tag_reads(row,session):
     payload={'format':'json','tag_id':row['TagID']}
     r1=session.get('http://{0}/api/etag/tags/'.format(hostname),params=payload)
     if r1.json()['count'] <1:
-        payload={'tag_id':row['TagID'],'name':'ETAG TAG_ID {0}'.format(row['TagID']),'description':'ETAG TAG_ID {0}'.format(row['TagID'])}
+        payload={'tag_id':row['TagID'],'name':'ETAG TAG_ID {0}'.format(row['TagID']),'description':'ETAG TAG_ID {0}'.format(row['TagID']),'public':row['public_id']}
         session.post('http://{0}/api/etag/tags/'.format(hostname),data=payload)
     payload={'reader':row['reader_id'],'tag':row['TagID'],'tag_timestamp':row['timestamp']}
     r2=session.post('http://{0}/api/etag/tag_reads/?format=json'.format(hostname),data=payload)
     return r2.status_code
 
-def etlData(reader_id,file_path,session,skipHeaderRows):
+def etlData(reader_id,file_path,session,public_id,skipHeaderRows):
     """ 
     etlData(reader_id,file_path,session,skipHeaderRows)
     args: 
@@ -48,12 +48,13 @@ def etlData(reader_id,file_path,session,skipHeaderRows):
     #Trim and add reader_id to row
     data1=data[['TagID','timestamp']]
     data1['reader_id']=reader_id
+    data1['public_id']=public_id
     #Apply function to each row of dataframe 
     data1.apply( (lambda x: insert_tag_reads(x,session)), axis=1)
     return "Tag Reads recored: {0}".format(len(data1.index))
 
 @task()
-def etagDataUpload(reader_id,file_path,token,skipHeaderRows=1):
+def etagDataUpload(reader_id,file_path,token,public_id,skipHeaderRows=1):
     """
     This task is associated with the etag-file-upload view.
     The view URl: /api/etag/file-upload/ . Provides a mechanism 
@@ -75,7 +76,7 @@ def etagDataUpload(reader_id,file_path,token,skipHeaderRows=1):
     s.headers.update(headers)
     r = s.get('http://{0}/api/etag/readers/'.format(hostname),params=payload)
     if r.json()['count'] >=1:
-        return etlData(reader_id,file_path,s,int(skipHeaderRows))
+        return etlData(reader_id,file_path,s,public_id,int(skipHeaderRows))
     else:
         raise Exception('reader_id must be provided')
 
