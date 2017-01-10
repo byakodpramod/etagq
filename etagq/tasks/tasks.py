@@ -26,6 +26,10 @@ def insert_tag_reads(row,session):
     if r1.json()['count'] <1:
         payload={'tag_id':row['TagID'],'name':'ETAG TAG_ID {0}'.format(row['TagID']),'description':'ETAG TAG_ID {0}'.format(row['TagID']),'public':row['public_id']}
         session.post('http://{0}/api/etag/tags/'.format(hostname),data=payload)
+    if (r1.json()['count'] >=1 and row['public_id']==True):
+		payload={'tag_id':row['TagID'],'name':'ETAG TAG_ID {0}'.format(row['TagID']),'description':'ETAG TAG_ID {0}'.format(row['TagID']),'public':row['public_id']}
+		session.put('http://{0}/api/etag/tags/{1}/'.format(hostname,row['TagID']),data=payload)
+    
     payload={'reader':row['reader_id'],'tag':row['TagID'],'tag_timestamp':row['timestamp']}
     r2=session.post('http://{0}/api/etag/tag_reads/?format=json'.format(hostname),data=payload)
     return r2.status_code
