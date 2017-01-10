@@ -43,6 +43,7 @@ def etlData(reader_id,file_path,session,public_id,skipHeaderRows):
         session - python requests session with api token as header
         skipHeaderRows - Number of rows to skip
     """
+    
     # Load pandas dataframe
     data=pd.read_csv(file_path,sep=' ',skiprows=skipHeaderRows)
     columnnames=["TagID","Date","Time"]
@@ -54,8 +55,14 @@ def etlData(reader_id,file_path,session,public_id,skipHeaderRows):
     data1['reader_id']=reader_id
     data1['public_id']=public_id
     #Apply function to each row of dataframe 
+    payload={'format':'json'}
+    initl_count=session.get('http://{0}/api/etag/tag_reads/'.format(hostname),params=payload).json()['count']
     data1.apply( (lambda x: insert_tag_reads(x,session)), axis=1)
-    return "Tag Reads recored: {0}".format(len(data1.index))
+    final_count=session.get('http://{0}/api/etag/tag_reads/'.format(hostname),params=payload).json()['count']
+    total_count=final_count-initl_count
+    if total_count == 0:
+		return "No Tag Reads recorded. You are uploading an already existing file"
+    return "Tag Reads recored: {0}".format(total_count)
 
 @task()
 def etagDataUpload(reader_id,file_path,token,public_id,skipHeaderRows=1):
