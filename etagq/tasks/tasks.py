@@ -6,76 +6,83 @@ import json
 import os, sys
 import pandas as pd
 from datetime import datetime
+import logging
+import re
+import celeryconfig
+from celeryconfig import DB_USERNAME, DB_PASSWORD, DB_NAME, DB_HOST, DB_PORT
+import sqlalchemy
+from sqlalchemy.engine.url import URL
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DataError
+import json
 
 #Default base directory 
 basedir="/data/static/"
 
-hostname=os.environ.get("host_hostname", '10.195.67.43')
+def parseFile(path, filetype):
+    #TODO add required fields to the following lists
+    animal_required_fields = []
+    location_required_fields = []
+    tag_required_fields = ["UUID", "TAG_ID", "TIMESTAMP"]
 
-def insert_tag_reads(row,session):
-    """
-    Checks or creates tag record. Then inserts datarow into tag_reads.
+    df = pd.read_csv(path)
+    file_fields = list(df.columns.str.upper())
+    if filetype == "animals":
+        required_fields = animal_required_fields
+    if filetype == "locations":
+        required_fields = location_required_fields
+    if filetype == "tags":
+        required_fields = tag_required_fields
+    if not all([column in file_fields for column in required_fields]):
+        return ("ERROR", "file does not have all required fields")
 
-    insert_tag_reads(row,session)
-    args:
-        row - Pandas Dataframe Row
-        session - python requests session with api token as header
-    """
-    payload={'format':'json','tag_id':row['TagID']}
-    r1=session.get('http://{0}/api/etag/tags/'.format(hostname),params=payload)
-    if r1.json()['count'] <1:
-        payload={'tag_id':row['TagID'],'name':'ETAG TAG_ID {0}'.format(row['TagID']),'description':'ETAG TAG_ID {0}'.format(row['TagID'])}
-        session.post('http://{0}/api/etag/tags/'.format(hostname),data=payload)
-    payload={'reader':row['reader_id'],'tag':row['TagID'],'tag_timestamp':row['timestamp']}
-    r2=session.post('http://{0}/api/etag/tag_reads/?format=json'.format(hostname),data=payload)
-    return r2.status_code
+    #TODO upsert file data into databse
 
-def etlData(reader_id,file_path,session,skipHeaderRows):
-    """ 
-    etlData(reader_id,file_path,session,skipHeaderRows)
-    args: 
-        reader_id - reader must be present in database
-        file_path - local file upload from api view
-        session - python requests session with api token as header
-        skipHeaderRows - Number of rows to skip
-    """
-    # Load pandas dataframe
-    data=pd.read_csv(file_path,sep=' ',skiprows=skipHeaderRows)
-    columnnames=["TagID","Date","Time"]
-    data.columns=columnnames
-    #add timestamp
-    data['timestamp']=pd.to_datetime(data['Date'] + ' ' + data['Time'])
-    #Trim and add reader_id to row
-    data1=data[['TagID','timestamp']]
-    data1['reader_id']=reader_id
-    #Apply function to each row of dataframe 
-    data1.apply( (lambda x: insert_tag_reads(x,session)), axis=1)
-    return "Tag Reads recored: {0}".format(len(data1.index))
 
 @task()
-def etagDataUpload(reader_id,file_path,token,skipHeaderRows=1):
+def etagDataUpload(local_file,request_data):
+    
     """
     This task is associated with the etag-file-upload view.
     The view URl: /api/etag/file-upload/ . Provides a mechanism 
     to upload local file and runs this task. If you are unsure 
     you should go to the upload view to run task.
-
-    etagDataUpload(reader_id,file_path,token,skipHeaderRows=1)
+    etagDataUpload(local_file,request_data)
     args:
-        reader_id - reader must exist in  database
-        file_path - local filepath (associated with etag-file-upload view
-        token - REST api token for authentication
-    kwargs:
-        skipHeaderRows - Number of rows to skip
+        local_file - local filepath (associated with etag-file-upload view
     """
+    pg_db = {
+    'drivername': 'postgres',
+    'username': DB_USERNAME,
+    'password': DB_PASSWORD,
+    'database': DB_NAME,
+    'host': DB_HOST,
+    'port': DB_PORT
+    }
 
-    headers={'Authorization':'Token {0}'.format(token)}
-    payload = {'format':'json','reader_id':reader_id}
-    s = requests.Session()
-    s.headers.update(headers)
-    r = s.get('http://{0}/api/etag/readers/'.format(hostname),params=payload)
-    if r.json()['count'] >=1:
-        return etlData(reader_id,file_path,s,int(skipHeaderRows))
-    else:
-        raise Exception('reader_id must be provided')
-
+    try:
+	engine = create_engine(URL(**pg_db))
+   	conn = engine.connect()
+    except sqlalchemy.exc.OperationalError as e:
+   	logging.error("Error with DB connection (from dspaceq/reports)\n{0}".format(e))
+   	return("ERROR: Issue connecting to database, try again in a few minutes")
+    
+    test_query = """select * from readers;"""
+    
+    #try:
+    results=[]
+    res_items = conn.execute(text(test_query)).fetchall()
+    #res_items = json.dumps(res_items)
+    #loaded_item = json.loads(res_items)
+    return json.loads(json.dumps([dict(r) for r in res_items]))
+    #excepton sqlalchemy.exc.DataError as e:
+    #return {"ERROR": "Could not process supplied dates"}
+    
+    
+    #filetypes = ["animals", "locations", "tags"]
+    #filetype = request_data.get('filetype', None)
+    #if filetype not in filetypes:
+    #    return ("ERROR", "filetype must be one of: animals, locations, tags")
+    #parseFile(local_file, filetype)
+    #TODO update return to provide results to user
+    #return (local_file, request_data)
